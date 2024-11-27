@@ -59,7 +59,7 @@ ModelConfig = namedtuple(
         'batch_size', 'learning_rate', 'weight_decay', 'epochs', 'temperature'
     ],
     rename=False,
-    defaults=[8, 1e-3, 1e-5, 100, 0.1]
+    defaults=[256, 1e-3, 1e-5, 100, 0.1]
 )
 
 # PyTorch Lightning Module

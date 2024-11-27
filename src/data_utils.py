@@ -2,11 +2,12 @@
 # coding: utf-8
 
 from collections import namedtuple
-from typing import Optional, List, Dict, Literal
+from typing import Optional, List, Dict, LiteralString
 import json
+import random
 
 import torch
-import torch.nn as nn
+from torch import nn, Tensor
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 import torchaudio
@@ -24,6 +25,62 @@ AudioConfig = namedtuple(
     defaults=[16000, 512, 256, 16000, 80, 0.01, 1.2, 4, 10, 50]
 )
 
+# Wave based augmentation
+class WaveAugmentation(nn.Module):
+    def __init__(self, config: Optional[Dict] = None):
+        super().__init__()
+        if config is None:
+            self.config = AudioConfig()._asdict()
+        else:
+            self.config = AudioConfig()._asdict() | config
+
+        self.transforms = nn.ModuleDict({
+            'noise': AddWhiteNoise(noise_level=self.config['noise_level']),
+            'gain': torchaudio.transforms.Vol(gain=self.config['gain'], gain_type='amplitude'),
+            #'pitch_shift': torchaudio.transforms.PitchShift(
+            #    sample_rate=self.config['sample_rate'],
+            #    n_steps=self.config['pitch_shift']
+            #)
+        })
+
+    @torch.no_grad()
+    def forward(self, audio: Tensor):
+        candidates = list(self.transforms.keys())
+        numerus_closus = random.randint(1, len(candidates))
+        selection = random.sample(candidates, numerus_closus)
+        for k in selection:
+            audio = self.transforms[k](audio)
+        return audio
+
+# Add noise transform
+class AddWhiteNoise(nn.Module):
+    def __init__(self, noise_level=0.01):
+        super().__init__()
+        self.noise_level = noise_level
+   
+    @torch.no_grad()
+    def forward(self, audio:Tensor):
+        noise = torch.randn_like(audio) * self.noise_level
+        return audio + noise
+
+# Spectrogram based augmentation
+class SpectrogramAugmentation(nn.Module):
+    def __init__(self, config: Optional[Dict] = None):
+        super().__init__()
+        if config is None:
+            self.config = AudioConfig()._asdict()
+        else:
+            self.config = AudioConfig()._asdict() | config
+
+        self.transforms = nn.Sequential(
+            torchaudio.transforms.TimeMasking(time_mask_param=self.config['max_time_mask']),
+            torchaudio.transforms.FrequencyMasking(freq_mask_param=self.config['max_freq_mask'])
+        )
+
+    @torch.no_grad()
+    def forward(self, spectrogram: Tensor):
+        return self.transforms(spectrogram)
+
 # Data augmentation pipeline
 class AudioAugmentationPipeline(nn.Module):
     def __init__(
@@ -34,23 +91,10 @@ class AudioAugmentationPipeline(nn.Module):
 
         config = AudioConfig()._asdict() | (config or {})
 
-        # Waveform based transforms
-        self.transforms = nn.ModuleDict({
-            'noise': AddNoise(noise_level=config['noise_level']),
-            'gain': torchaudio.transforms.Vol(gain=config['gain'], gain_type='amplitude'),
-            'pitch_shift': torchaudio.transforms.PitchShift(
-                sample_rate=config['sample_rate'],
-                n_steps=config['pitch_shift']
-            )
-        })
-
-        # Spectrogram based transforms
-        self.masks = nn.ModuleDict({
-            'time_mask': torchaudio.transforms.TimeMasking(time_mask_param=config['max_time_mask']),
-            'freq_mask': torchaudio.transforms.FrequencyMasking(freq_mask_param=config['max_freq_mask'])
-        })
+        self.wave_transforms = WaveAugmentation(config)
         self.spectrogram = T.Spectrogram(n_fft=config['frame_length'], power=2)
-        self.melscale_spectrogram = T.MelScale(
+        self.spec_transforms = SpectrogramAugmentation(config)
+        self.melscale = T.MelScale(
             config['n_coef'],
             config['sample_rate'],
             0,
@@ -58,40 +102,19 @@ class AudioAugmentationPipeline(nn.Module):
             n_stft=config['frame_length']//2+1
         )
 
-    def forward(self, audio):
-        with torch.no_grad():
-            # First apply random waveform transforms
-            keys = list(self.transforms.keys())
-            num_transforms = np.random.randint(1, len(keys)+1)
-            selected_keys = np.random.choice(keys, num_transforms, replace=False)
+    @torch.no_grad()
+    def forward(self, audio: Tensor):
+        audio = self.wave_transforms(audio)
+        spectrogram = self.spectrogram(audio)
+        spectrogram = self.spec_transforms(spectrogram)
+        return self.melscale(spectrogram)
 
-            for key in selected_keys:
-                audio = self.transforms[key](audio)
-
-            # Second apply spectrogram random masking
-            spec = self.spectrogram(audio)
-            for key in self.masks:
-                spec = self.masks[key](spec)
-
-            spec = self.melscale_spectrogram(spec)
-        return spec
-
-# Add noise transform
-class AddNoise(nn.Module):
-    def __init__(self, noise_level=0.01):
-        super().__init__()
-        self.noise_level = noise_level
-    
-    def forward(self, x):
-        with torch.no_grad():
-            noise = torch.randn_like(x) * self.noise_level
-        return x + noise
 
 # Audio dataset main utility
 class AudioDataset(Dataset):
     def __init__(
         self, 
-        audio_data: Literal,
+        audio_data: LiteralString,
         config: Dict,
         augmentation_pipeline: Optional[AudioAugmentationPipeline] = None
     ):
@@ -122,6 +145,8 @@ class AudioDataset(Dataset):
             ]
         audio, sample_rate = torchaudio.sox_effects.apply_effects_file(datum['wav'], effects=effects)
 
+        audio = torchaudio.functional.preemphasis(audio, coeff=0.97)
+
         # Truncature
         if audio.size(1) > self.target_length:
             max_offset = audio.size(1) - self.target_length
@@ -131,7 +156,7 @@ class AudioDataset(Dataset):
         # SimCLR asks for two augmentations
         aug1 = self.augmentation(audio).squeeze(0).T
         aug2 = self.augmentation(audio).squeeze(0).T
-        return aug1, aug2   # shape [[T,C], [T,C]]
+        return aug1, aug2   # shape [T,C], [T,C]
 
 # Custom collate function for DataLoader
 def padded_batch_collate_fn(batch: List):   # batch shape: [(T, C), (T, C)]
