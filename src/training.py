@@ -10,6 +10,7 @@ import torch
 from torch import nn, Tensor
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
+from torch.optim.lr_scheduler import OneCycleLR
 import torchaudio.models
 
 from data_utils import AudioDataset, padded_batch_collate_fn
@@ -56,10 +57,12 @@ class ProjectionModule(nn.Module):
 ModelConfig = namedtuple(
     'ModelConfig',
     field_names=[
-        'batch_size', 'learning_rate', 'weight_decay', 'epochs', 'temperature'
+        'batch_size', 'learning_rate', 'weight_decay', 'epochs',
+        'warmup_steps', 'temperature',
+        'input_dim', 'n_heads', 'ffn_dim', 'n_layers', 'kernel_size'
     ],
     rename=False,
-    defaults=[256, 1e-3, 1e-5, 100, 0.1]
+    defaults=[8, 1e-5, 1e-5, 100, 5, 0.1, 80, 4, 64, 2, 31]
 )
 
 # PyTorch Lightning Module
@@ -74,16 +77,16 @@ class SimCLRAudioModel(pl.LightningModule):
             self.config = ModelConfig()._asdict() | config
 
         self.encoder = torchaudio.models.Conformer(
-            input_dim=80,
-            num_heads=4,
-            ffn_dim=64,
-            num_layers=2,
-            depthwise_conv_kernel_size=31   # Original paper shows similar perf. with kernel size from 7 until 32
+            input_dim=self.config['input_dim'],
+            num_heads=self.config['n_heads'],
+            ffn_dim=self.config['ffn_dim'],
+            num_layers=self.config['n_layers'],
+            depthwise_conv_kernel_size=self.config['kernel_size']   # Original paper shows similar perf. with kernel size from 7 until 32
         )
-        self.projection = ProjectionModule(80, 32)
+        self.projection = ProjectionModule(self.config['input_dim'], self.config['ffn_dim'])
         self.loss = NTXentLoss(self.config['temperature'])
 
-        self.save_hyperparameters()
+        self.save_hyperparameters(self.config)
     
     def training_step(self, batch, batch_idx):
         aug1, aug2, lengths = batch
@@ -94,6 +97,12 @@ class SimCLRAudioModel(pl.LightningModule):
         loss = self.loss(h1, h2).mean()
         self.log('train_loss', loss.detach(), on_step=True, on_epoch=True, prog_bar=True)
         return loss
+
+    def on_validation_start(self):
+        self.trainer.val_dataloaders.dataset.eval = True
+
+    def on_validation_end(self):
+        self.trainer.val_dataloaders.dataset.eval = False
     
     def validation_step(self, batch, batch_idx):
         aug1, aug2, lengths = batch
@@ -106,21 +115,24 @@ class SimCLRAudioModel(pl.LightningModule):
         return val_loss
     
     def configure_optimizers(self):
-        print(self.config)
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.config['learning_rate'],
             weight_decay=self.config['weight_decay']
         )
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, 
-            T_max=self.config['epochs']
+        cosine_warmup = OneCycleLR(
+            optimizer,
+            9.5e-3,
+            total_steps=self.trainer.estimated_stepping_batches,
+            pct_start=0.07,
+            anneal_strategy='cos',
+            three_phase=False
         )
         return {
             'optimizer': optimizer,
             'lr_scheduler': {
-                'scheduler': scheduler,
-                'interval': 'epoch'
+                'scheduler': cosine_warmup,
+                'interval': 'step',
             }
         }
 
@@ -135,14 +147,14 @@ def train(config: Dict):
         batch_size=config['batch_size'],
         collate_fn=padded_batch_collate_fn,
         shuffle=True,
-        num_workers=12
+        num_workers=16
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=config['batch_size'],
         collate_fn=padded_batch_collate_fn,
         shuffle=False,
-        num_workers=12
+        num_workers=16
     )
     
     # Create Lightning Trainer
@@ -158,13 +170,14 @@ def train(config: Dict):
                 mode='min', 
                 save_top_k=3
             ),
-            EarlyStopping(
-                monitor='val_loss', 
-                patience=10
-            ),
+            #EarlyStopping(
+            #    monitor='val_loss', 
+            #    patience=10
+            #),
             LearningRateMonitor()
         ],
-        log_every_n_steps=10
+        #val_check_interval=0.5,
+        log_every_n_steps=100
     )
     
     # Launch training

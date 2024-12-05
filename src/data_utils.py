@@ -19,10 +19,10 @@ AudioConfig = namedtuple(
     'AudioConfig',
     field_names=[
         'sample_rate', 'frame_length', 'frame_shift', 'target_length', 'n_coef',
-        'noise_level', 'gain', 'pitch_shift', 'max_freq_mask', 'max_time_mask'
+        'noise_level', 'gain', 'max_freq_mask', 'max_time_mask'
     ],
     rename=False,
-    defaults=[16000, 512, 256, 16000, 80, 0.01, 1.2, 4, 10, 50]
+    defaults=[16000, 512, 256, 16000, 80, 0.01, 1.2, 64, 16]
 )
 
 # Wave based augmentation
@@ -36,11 +36,7 @@ class WaveAugmentation(nn.Module):
 
         self.transforms = nn.ModuleDict({
             'noise': AddWhiteNoise(noise_level=self.config['noise_level']),
-            'gain': torchaudio.transforms.Vol(gain=self.config['gain'], gain_type='amplitude'),
-            #'pitch_shift': torchaudio.transforms.PitchShift(
-            #    sample_rate=self.config['sample_rate'],
-            #    n_steps=self.config['pitch_shift']
-            #)
+            'gain': T.Vol(gain=self.config['gain'], gain_type='amplitude')
         })
 
     @torch.no_grad()
@@ -73,8 +69,8 @@ class SpectrogramAugmentation(nn.Module):
             self.config = AudioConfig()._asdict() | config
 
         self.transforms = nn.Sequential(
-            torchaudio.transforms.TimeMasking(time_mask_param=self.config['max_time_mask']),
-            torchaudio.transforms.FrequencyMasking(freq_mask_param=self.config['max_freq_mask'])
+            T.TimeMasking(time_mask_param=self.config['max_time_mask']),
+            T.FrequencyMasking(freq_mask_param=self.config['max_freq_mask'])
         )
 
     @torch.no_grad()
@@ -125,7 +121,10 @@ class AudioDataset(Dataset):
         # Load data from json
         with open(audio_data, 'r') as fd:
             self.data_dict = json.load(fd)
+
         self.index_mapping = {i: idx for i, idx in enumerate(self.data_dict.keys())}
+        self.eval = False
+            
     
     def __len__(self):
         return len(self.data_dict)
@@ -134,15 +133,13 @@ class AudioDataset(Dataset):
         # Retrieve data index
         data_id = self.index_mapping[idx]
         datum = self.data_dict[data_id]
-        sample_rate = int(datum['rate'])
         
         # Uniformaize and resampling
-        effects = [['remix', '-']]
-        if sample_rate != self.config['sample_rate']:
-            effects += [
-                ['lowpass', f"{self.config['sample_rate']//2}"],
-                ['rate', f"{self.config['sample_rate']}"]
-            ]
+        effects = [
+            ['remix', '-'],
+            ['lowpass', f"{self.config['sample_rate']//2}"],
+            ['rate', f"{self.config['sample_rate']}"]
+        ]
         audio, sample_rate = torchaudio.sox_effects.apply_effects_file(datum['wav'], effects=effects)
 
         audio = torchaudio.functional.preemphasis(audio, coeff=0.97)
@@ -153,10 +150,15 @@ class AudioDataset(Dataset):
             offset = np.random.randint(0, max_offset+1)
             audio = audio[:, offset:offset+self.target_length]
 
-        # SimCLR asks for two augmentations
-        aug1 = self.augmentation(audio).squeeze(0).T
-        aug2 = self.augmentation(audio).squeeze(0).T
-        return aug1, aug2   # shape [T,C], [T,C]
+        # To train SimCLR requires two augmentations of a unique sample
+        if not self.eval:
+            aug1 = self.augmentation(audio).squeeze(0).T
+            aug2 = self.augmentation(audio).squeeze(0).T
+            return aug1, aug2   # shape [T,C], [T,C]
+        # To eval SimCLR we give two copies of same sample
+        else:
+            mel_spec = self.augmentation.melscale(self.augmentation.spectrogram(audio))
+            return mel_spec, mel_spec
 
 # Custom collate function for DataLoader
 def padded_batch_collate_fn(batch: List):   # batch shape: [(T, C), (T, C)]
