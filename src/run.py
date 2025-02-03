@@ -4,7 +4,8 @@
 from typing import Dict
 import argparse
 
-from training import train, ModelConfig
+from training import train
+from models import ModelConfig
 from data_utils import AudioConfig
 
 def main(args: Dict):

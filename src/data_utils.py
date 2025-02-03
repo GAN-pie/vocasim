@@ -2,7 +2,7 @@
 # coding: utf-8
 
 from collections import namedtuple
-from typing import Optional, List, Dict, LiteralString
+from typing import Optional, List, Dict, LiteralString, Tuple
 import json
 import random
 
@@ -181,3 +181,46 @@ def padded_batch_collate_fn(batch: List):   # batch shape: [(T, C), (T, C)]
 
     # return shape [B, T, C], [B, T, C], [B,]
     return torch.stack(padded_batch_aug1), torch.stack(padded_batch_aug2), torch.Tensor(lengths)
+
+def simclr_collate(batch: List, eval: bool = False):
+    pass
+
+
+
+
+class BaseAudioDataset(Dataset):
+    def __init__(self, data: LiteralString, config: Optional[Dict] = None):
+        super().__init__()
+
+        # Required default audio condig or overiding it with config in arguments
+        if config is None:
+            self.confif = AudioConfig()._asdict()
+        else:
+            self.config = AudioConfig()._asdict() | config
+
+        with open(data, 'r') as fd:
+            self.data_dict = json.load(fd)
+
+        self.index_map = {i: idx for i, idx in enumerate(self.data_dict.keys())}
+
+        self.augmentation = None
+        self.eval = False
+
+    def __len__(self):
+        return len(self.index_map)
+
+    def __getitem__(self, idx: int) -> Tuple[LiteralString, Tensor]:
+        # Retrieve data index
+        data_id = self.index_map[idx]
+        datum = self.data_dict[data_id]
+        
+        # Uniformaize and resampling
+        effects = [
+            ['remix', '-'],
+            ['lowpass', f"{self.config['sample_rate']//2}"],
+            ['rate', f"{self.config['sample_rate']}"]
+        ]
+        audio, sample_rate = torchaudio.sox_effects.apply_effects_file(datum['wav'], effects=effects)
+
+        audio = torchaudio.functional.preemphasis(audio, coeff=0.97)
+        return data_id, audio
