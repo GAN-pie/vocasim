@@ -6,4 +6,5 @@ The goal of Vocasim is to provide a simple and reliable framework to perform voi
 
 ## Implemented Models
 The framework allows you to choose between following architectures:
-- Conformer
+- SimCLR
+- CPC

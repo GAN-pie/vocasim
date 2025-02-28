@@ -5,8 +5,7 @@ from typing import Dict
 import argparse
 
 from training import train
-from models import ModelConfig
-from data_utils import AudioConfig
+from config import ModelConfig, AudioConfig
 
 def main(args: Dict):
     config = ModelConfig()._asdict() | AudioConfig()._asdict() | args
@@ -17,6 +16,8 @@ if __name__ == '__main__':
 
     arg_parser.add_argument('train_data', help='path to train json file')
     arg_parser.add_argument('val_data', help='path to validation json file')
+
+    arg_parser.add_argument('--model', default='simclr', choices=['simclr', 'cpc'])
 
     args = vars(arg_parser.parse_args())
     main(args)
