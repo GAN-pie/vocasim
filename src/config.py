@@ -1,26 +1,48 @@
 # coding: utf-8
 
+from typing import Optional
 from collections import namedtuple
+from dataclasses import dataclass
 
-ModelConfig = namedtuple(
-    'ModelConfig',
-    field_names=[
-        'batch_size', 'learning_rate', 'weight_decay', 'epochs',
-        'warmup_steps', 'temperature',
-        'input_dim', 'n_heads', 'ffn_dim', 'n_layers', 'kernel_size',
-        'steps', 'noise_samples'
-    ],
-    rename=False,
-    defaults=[8, 1e-5, 1e-5, 1, 5, 0.1, 80, 4, 128, 2, 31, 12, 6]
-)
 
-# Audio related configuration
-AudioConfig = namedtuple(
-    'AudioConfig',
-    field_names=[
-        'sample_rate', 'frame_length', 'frame_shift', 'target_length', 'n_coef',
-        'noise_level', 'gain', 'max_freq_mask', 'max_time_mask'
-    ],
-    rename=False,
-    defaults=[16000, 512, 256, 16000, 80, 0.01, 1.2, 64, 16]
-)
+@dataclass
+class ModelConfiguration:
+    epochs: int = 1
+
+    batch_size: int = 8
+    lr: float = 1e-5
+    weight_decay: float = 1e5
+    warmup_steps: float = 5
+
+    temperature: float = 0.1
+
+    input_dim: int = 257
+    n_heads: int = 1
+    ffn_dim: int = 128
+    n_layers: int = 2
+    kernel_size: int = 31
+
+    steps: int = 8
+    noise_samples: int = 12
+
+
+@dataclass
+class AudioConfiguration:
+    sample_rate: int = 16000
+    n_fft: int = 512
+    win_len: int = 512
+    hop_len: int = 256
+
+    n_mels: Optional[int] = None
+
+    noise_level: float = 0.01
+    gain: float = 1.2
+
+    n_freq_mask: int = 2
+    max_freq_mask: int = 16
+    n_time_mask: int = 2
+    max_time_mask: int = 8
+
+    target_size: int = 16000
+
+

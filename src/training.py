@@ -23,18 +23,11 @@ class SimCLRModule(pl.LightningModule):
 
         self.simclr = SimCLR(config)
 
-        self.melscale = torchaudio.transforms.MelScale(
-            config['n_coef'],
-            config['sample_rate'],
-            0,
-            config['sample_rate']//2,
-            n_stft=config['frame_length']//2+1
-        )
-        self.spec_aug = torchaudio.transforms.SpecAugment(
-            n_time_masks=1,
-            time_mask_param=16,
-            n_freq_masks=1,
-            freq_mask_param=64,
+        self.spec_augment = torchaudio.transforms.SpecAugment(
+            n_time_masks=config['n_time_mask'],
+            time_mask_param=config['max_time_mask'],
+            n_freq_masks=config['n_freq_mask'],
+            freq_mask_param=config['max_freq_mask'],
             iid_masks=True,
             p=1.0,
             zero_masking=True
@@ -45,8 +38,8 @@ class SimCLRModule(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
         labels, x1, x2, lengths = batch
-        x1 = self.melscale(self.spec_aug(x1)).permute(0, 2, 1)
-        x2 = self.melscale(self.spec_aug(x2)).permute(0, 2, 1)
+        x1 = self.spec_augment(x1).permute(0, 2, 1)
+        x2 = self.spec_augment(x2).permute(0, 2, 1)
         lengths = Tensor(lengths).to(x1)
         loss = self.simclr(x1, x2, lengths)
         self.log('train_loss', loss.detach(), on_step=True, on_epoch=True, prog_bar=True)
@@ -54,8 +47,8 @@ class SimCLRModule(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         labels, x1, x2, lengths = batch
-        x1 = self.melscale(x1).permute(0, 2, 1)
-        x2 = self.melscale(x2).permute(0, 2, 1)
+        x1 = x1.permute(0, 2, 1)
+        x2 = x2.permute(0, 2, 1)
         lengths = Tensor(lengths).to(x1)
         val_loss = self.simclr(x1, x2, lengths)
         self.log('val_loss', val_loss.detach(), on_epoch=True, prog_bar=True)
@@ -64,7 +57,7 @@ class SimCLRModule(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.parameters(),
-            lr=self.config['learning_rate'],
+            lr=self.config['lr'],
             weight_decay=self.config['weight_decay']
         )
         cosine_warmup = OneCycleLR(
@@ -90,36 +83,21 @@ class CPCModule(pl.LightningModule):
 
         self.cpc = CPCInfoNCE(config)
 
-        self.melscale = torchaudio.transforms.MelScale(
-            config['n_coef'],
-            config['sample_rate'],
-            0,
-            config['sample_rate']//2,
-            n_stft=config['frame_length']//2+1
-        )
-        self.spec_aug = torchaudio.transforms.SpecAugment(
-            n_time_masks=1,
-            time_mask_param=16,
-            n_freq_masks=1,
-            freq_mask_param=64,
-            iid_masks=True,
-            p=1.0,
-            zero_masking=True
-        )
-
         self.config = config
         self.save_hyperparameters(config)
     
     def training_step(self, batch, batch_idx):
         labels, x, _= batch
-        x = self.melscale(self.spec_aug(x)).permute(0, 2, 1)
+        # x = self.melscale(x).permute(0, 2, 1)
+        x = x.permute(0, 2, 1)
         loss = self.cpc(x)
         self.log('train_loss', loss.detach(), on_step=True, on_epoch=True, prog_bar=True)
         return loss
     
     def validation_step(self, batch, batch_idx):
         labels, x, _= batch
-        x = self.melscale(x).permute(0, 2, 1)
+        # x = self.melscale(x).permute(0, 2, 1)
+        x = x.permute(0, 2, 1)
         val_loss = self.cpc(x)
         self.log('val_loss', val_loss.detach(), on_epoch=True, prog_bar=True)
         return val_loss
@@ -127,7 +105,7 @@ class CPCModule(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.parameters(),
-            lr=self.config['learning_rate'],
+            lr=self.config['lr'],
             weight_decay=self.config['weight_decay']
         )
         cosine_warmup = OneCycleLR(
@@ -147,23 +125,9 @@ class CPCModule(pl.LightningModule):
         }
 
 
-def train(config: Dict):
-    train_dataset = SpectrogramDataset(
-        config['train_data'],
-        config['sample_rate'],
-        config['frame_length'],
-        config['frame_shift'],
-        config['target_length'],
-        simclr=True if config['model'] == 'simclr' else False
-    )
-    val_dataset = SpectrogramDataset(
-        config['val_data'],
-        config['sample_rate'],
-        config['frame_length'],
-        config['frame_shift'],
-        config['target_length'],
-        simclr=True if config['model'] == 'simclr' else False
-    )
+def train(train_data: str, val_data: str, config: Dict):
+    train_dataset = SpectrogramDataset(train_data, config)
+    val_dataset = SpectrogramDataset(val_data, config)
     
     train_loader = DataLoader(
         train_dataset,

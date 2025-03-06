@@ -26,7 +26,6 @@ class NTXentLoss(nn.Module):
         """
         batch_size = z1.size(0)
         
-        # Normalisation
         z1_norm = F.normalize(z1, p=2, dim=1)
         z2_norm = F.normalize(z2, p=2, dim=1)
         z = torch.cat((z1_norm, z2_norm), dim=0)
@@ -71,7 +70,7 @@ class SimCLR(nn.Module):
             num_heads=self.config['n_heads'],
             ffn_dim=self.config['ffn_dim'],
             num_layers=self.config['n_layers'],
-            depthwise_conv_kernel_size=self.config['kernel_size'] # Similar perf. with kernel size from 7 until 32 according to paper
+            depthwise_conv_kernel_size=self.config['kernel_size'] # similar perf. with kernel size from 7 until 32 according to paper
         )
 
         self.projection = nn.Sequential(
@@ -98,7 +97,7 @@ class SimCLR(nn.Module):
         z1 = z1.mean(1)
         z2 = z2.mean(1)
         
-        h1 = self.projection() # shape is now [B, C]
-        h2 = self.projection()
+        h1 = self.projection(z1) # shape is now [B, C]
+        h2 = self.projection(z2)
 
         return self.ntxent_loss(h1, h2)

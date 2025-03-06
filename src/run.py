@@ -3,13 +3,16 @@
 
 from typing import Dict
 import argparse
+from dataclasses import asdict
 
 from training import train
-from config import ModelConfig, AudioConfig
+from config import AudioConfiguration, ModelConfiguration
 
 def main(args: Dict):
-    config = ModelConfig()._asdict() | AudioConfig()._asdict() | args
-    train(config)
+    model_config = ModelConfiguration()
+    audio_config = AudioConfiguration()
+    config = asdict(model_config) | asdict(audio_config) | args
+    train(args['train_data'], args['val_data'], config)
 
 if __name__ == '__main__':
     arg_parser = argparse.ArgumentParser()
