@@ -88,7 +88,6 @@ class CPCModule(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
         labels, x, _= batch
-        # x = self.melscale(x).permute(0, 2, 1)
         x = x.permute(0, 2, 1)
         loss = self.cpc(x)
         self.log('train_loss', loss.detach(), on_step=True, on_epoch=True, prog_bar=True)
@@ -96,7 +95,6 @@ class CPCModule(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         labels, x, _= batch
-        # x = self.melscale(x).permute(0, 2, 1)
         x = x.permute(0, 2, 1)
         val_loss = self.cpc(x)
         self.log('val_loss', val_loss.detach(), on_epoch=True, prog_bar=True)

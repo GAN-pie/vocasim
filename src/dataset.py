@@ -63,14 +63,14 @@ class BaseAudioDataset(Dataset):
             channels_first=True
         )
         audio = torchaudio.functional.preemphasis(audio, coeff=0.97)
+        if self.target_size and audio.size(-1) > self.target_size:
+            audio = _truncate(audio, self.target_size)
         return audio
 
     def __getitem__(self, idx: int):
         data_id = self.index_map[idx]
         datum = self.data_dict[data_id]
         audio = self._load_audio(datum['wav'])
-        if self.target_size and audio.size(-1) > self.target_size:
-            audio = _truncate(audio, self.target_size)
         return data_id, audio.unsqueeze(0)
 
 
@@ -83,17 +83,17 @@ class SpectrogramDataset(BaseAudioDataset):
         super().__init__(data, config)
 
         self.spec = Spectrogram(
-                n_fft=config['n_fft'],
-                win_length=config['win_len'],
-                hop_length=config['hop_len'],
-                center=False
+            n_fft=config['n_fft'],
+            win_length=config['win_len'],
+            hop_length=config['hop_len'],
+            center=False
         )
 
         self.transforms = MelScale(
             config['n_mels'],
             config['sample_rate'],
             n_stft=config['n_fft']//2+1
-        ) if config['n_mels'] else None
+        ) if config['n_mels'] > 0 else None
  
         self.simclr = True if config['model'] == 'simclr' else False
 
@@ -101,13 +101,11 @@ class SpectrogramDataset(BaseAudioDataset):
         data_id = self.index_map[idx]
         datum = self.data_dict[data_id]
         audio = self._load_audio(datum['wav'])
-        if self.target_size and audio.size(-1) > self.target_size:
-            audio = _truncate(audio, self.target_size)
         spec = self.spec(audio)
         if self.transforms:
             spec = self.transforms(spec)
         if self.simclr:
-            # For SimCLR we need two augmentations of a same sample
+            # for SimCLR we need two augmentations of a same sample
             spec = spec.expand(2, -1, -1)
         return data_id, spec
 
@@ -138,55 +136,77 @@ def simclr_batch_collate(
 
 
 if __name__ == '__main__':
+    import matplotlib.pyplot as plt
     config = {
-        'data_file': '../atthack/atthack_test.json',
         'sample_rate': 16000,
+        'input_dim': 80,
         'n_fft': 512,
         'win_len': 512,
         'hop_len': 256,
         'simclr': True,
-        'target_size': 16000,
-        'n_mels': None
+        'target_size': 16000*5,
+        'n_mels': 80,
+        'model': 'simclr'
     }
     spec_aug = SpecAugment(
-            n_time_masks=1,
-            time_mask_param=16,
-            n_freq_masks=1,
-            freq_mask_param=64,
+            n_time_masks=2,
+            time_mask_param=8,
+            n_freq_masks=2,
+            freq_mask_param=16,
             iid_masks=True,
             p=1.0,
             zero_masking=True
         )
     # dataset = BaseAudioDataset(config)
-    data = SpectrogramDataset(config)
+    data = SpectrogramDataset('../atthack/atthack_test.json', config)
     loader = DataLoader(
         data,
         3,
-        collate_fn=simclr_batch_collate
+        collate_fn=simclr_batch_collate if config['model'] == 'simclr' else padded_batch_collate,
+        shuffle=True
     )
 
     # for i in range(len(dataset)):
     #     label, data = dataset[i]
 
-    for Y, X1, X2, L in loader:
-        X1, X2 = spec_aug(X1), spec_aug(X2)
-        print(Y, L, X1.mean(), X2.mean(), X1.size())
+    if config['model'] == 'simclr':
+        for Y, X1, X2, L in loader:
+            X1, X2 = spec_aug(X1), spec_aug(X2)
+            print(Y, L, X1.mean(), X2.mean(), X1.size())
+            # f, ax = plt.subplots(3, 2)
+            # for b in range(3):
+            #     ax[b][0].imshow(X1[b])
+            #     ax[b][1].imshow(X2[b])
+            # plt.tight_layout()
+            # plt.show()
+    else:
+        for Y, X, L in loader:
+            X = X
+            print(Y, L, X.mean(), X.size())
 
 
 # Unit tests
 import pytest
 
+def test_truncate():
+    assert _truncate(torch.zeros(1, 128), 101).size() == torch.Size((1, 101))
+
+def test_truncate_fail():
+    with pytest.raises(AssertionError) as err:
+        assert _truncate(torch.zeros(1, 1, 128), 101).size() == torch.Size((1, 1, 101))
+        assert _truncate(torch.zeros(1, 128), 131)
+
 @pytest.fixture
 def simclr_dataset():
-    return SpectrogramDataset({
-        'data_file': '../atthack/atthack_test.json',
+    return SpectrogramDataset('../atthack/atthack_test.json', {
         'sample_rate': 16000,
         'n_fft': 512,
         'win_len': 512,
         'hop_len': 256,
         'simclr': True,
         'target_size': 16000,
-        'n_mels': None
+        'n_mels': None,
+        'model': 'simclr'
     })
 
 def test_simclr_dataset_getitem(simclr_dataset):
@@ -201,30 +221,28 @@ def test_simclr_batch_collate(simclr_dataset):
 
 @pytest.fixture
 def dataset():
-    return SpectrogramDataset({
-        'data_file': '../atthack/atthack_test.json',
+    return SpectrogramDataset('../atthack/atthack_test.json', {
         'sample_rate': 16000,
         'n_fft': 512,
         'win_len': 512,
         'hop_len': 256,
         'simclr': False,
         'target_size': 16000,
-        'n_mels': None
+        'n_mels': None,
+        'model': 'cpc'
     })
 
 @pytest.fixture
 def mel_dataset():
-    return SpectrogramDataset({
-        'data_file': '../atthack/atthack_test.json',
+    return SpectrogramDataset('../atthack/atthack_test.json', {
         'sample_rate': 16000,
         'n_fft': 512,
         'win_len': 512,
         'hop_len': 256,
         'simclr': False,
         'target_size': 16000,
-        'n_mels': 80
-
-
+        'n_mels': 80,
+        'model': 'cpc'
     })
 
 def test_dataset_getitem(dataset):
