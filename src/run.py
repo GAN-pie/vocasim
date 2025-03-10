@@ -21,6 +21,7 @@ if __name__ == '__main__':
     arg_parser.add_argument('val_data', help='path to validation json file')
 
     arg_parser.add_argument('--model', default='simclr', choices=['simclr', 'cpc'])
+    arg_parser.add_argument('--epochs', default=1, type=int)
 
     args = vars(arg_parser.parse_args())
     main(args)

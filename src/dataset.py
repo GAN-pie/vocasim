@@ -70,7 +70,8 @@ class BaseAudioDataset(Dataset):
     def __getitem__(self, idx: int):
         data_id = self.index_map[idx]
         datum = self.data_dict[data_id]
-        audio = self._load_audio(datum['wav'])
+        audio_path = datum.get('wav', datum.get('audio'))
+        audio = self._load_audio(audio_path)
         return data_id, audio.unsqueeze(0)
 
 
@@ -100,7 +101,8 @@ class SpectrogramDataset(BaseAudioDataset):
     def __getitem__(self, idx: int):
         data_id = self.index_map[idx]
         datum = self.data_dict[data_id]
-        audio = self._load_audio(datum['wav'])
+        audio_path = datum.get('wav', datum.get('audio'))
+        audio = self._load_audio(audio_path)
         spec = self.spec(audio)
         if self.transforms:
             spec = self.transforms(spec)
