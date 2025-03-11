@@ -6,15 +6,16 @@ from collections import namedtuple
 
 import lightning as pl
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint, LearningRateMonitor
+from lightning.pytorch.utilities import grad_norm
 import torch
 from torch import nn, Tensor
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import OneCycleLR
+from torch.optim.lr_scheduler import OneCycleLR, ReduceLROnPlateau
 import torchaudio.models
 
 from models import SimCLR, CPCInfoNCE
-from dataset import SpectrogramDataset, simclr_batch_collate, padded_batch_collate
+from dataset import SpectrogramDataset, simclr_batch_collate, padded_batch_collate, BaseAudioDataset
 
 
 class SimCLRModule(pl.LightningModule):
@@ -53,6 +54,10 @@ class SimCLRModule(pl.LightningModule):
         val_loss = self.simclr(x1, x2, lengths)
         self.log('val_loss', val_loss.detach(), on_epoch=True, prog_bar=True)
         return val_loss
+
+    def on_before_optimizer_step(self, optimizer):
+        norms = grad_norm(self.simclr, norm_type=2)
+        self.log_dict(norms)
     
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
@@ -62,16 +67,24 @@ class SimCLRModule(pl.LightningModule):
         )
         cosine_warmup = OneCycleLR(
             optimizer,
-            9.5e-3,
+            self.config['lr'],
             total_steps=self.trainer.estimated_stepping_batches,
-            pct_start=0.07,
+            pct_start=0.05,
             anneal_strategy='cos',
             three_phase=False
         )
+        # reduce_lr = ReduceLROnPlateau(
+        #     optimizer,
+        #     mode='min',
+        #     factor=0.5,
+        #     patience=1000,
+        # )
         return {
             'optimizer': optimizer,
             'lr_scheduler': {
                 'scheduler': cosine_warmup,
+                # 'scheduler': reduce_lr,
+                # 'monitor': 'train_loss',
                 'interval': 'step',
             }
         }
@@ -99,6 +112,10 @@ class CPCModule(pl.LightningModule):
         val_loss = self.cpc(x)
         self.log('val_loss', val_loss.detach(), on_epoch=True, prog_bar=True)
         return val_loss
+
+    def on_before_optimizer_step(self, optimizer):
+        norms = grad_norm(self.cpc, norm_type=2)
+        self.log_dict(norms)
     
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
@@ -108,24 +125,34 @@ class CPCModule(pl.LightningModule):
         )
         cosine_warmup = OneCycleLR(
             optimizer,
-            9.5e-3,
+            self.config['lr'],
             total_steps=self.trainer.estimated_stepping_batches,
-            pct_start=0.07,
+            pct_start=0.05,
             anneal_strategy='cos',
             three_phase=False
         )
+        # reduce_lr = ReduceLROnPlateau(
+        #     optimizer,
+        #     mode='min',
+        #     factor=0.5,
+        #     patience=1000,
+        # )
         return {
             'optimizer': optimizer,
             'lr_scheduler': {
                 'scheduler': cosine_warmup,
+                # 'scheduler': reduce_lr,
+                # 'monitor': 'train_loss',
                 'interval': 'step',
             }
         }
 
 
 def train(train_data: str, val_data: str, config: Dict):
-    train_dataset = SpectrogramDataset(train_data, config)
-    val_dataset = SpectrogramDataset(val_data, config)
+    train_dataset = SpectrogramDataset(train_data, config) \
+            if config['n_fft'] else BaseAudioDataset(train_data, config)
+    val_dataset = SpectrogramDataset(val_data, config) \
+            if config['n_fft'] else BaseAudioDataset(val_data, config)
     
     train_loader = DataLoader(
         train_dataset,
@@ -145,6 +172,8 @@ def train(train_data: str, val_data: str, config: Dict):
     model = SimCLRModule(config) if config['model'] == 'simclr' else CPCModule(config)
     
     trainer = pl.Trainer(
+        # overfit_batches=0.15,
+        gradient_clip_val=1.0,
         max_epochs=config['epochs'],
         # accelerator='gpu' if torch.cuda.is_available() else 'cpu',
         # precision='16-mixed',
@@ -154,10 +183,10 @@ def train(train_data: str, val_data: str, config: Dict):
                 mode='min', 
                 save_top_k=3
             ),
-            #EarlyStopping(
-            #    monitor='val_loss', 
-            #    patience=10
-            #),
+            # EarlyStopping(
+            #     monitor='val_loss', 
+            #     patience=5
+            # ),
             LearningRateMonitor()
         ],
         #val_check_interval=0.5,

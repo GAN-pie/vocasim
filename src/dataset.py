@@ -40,13 +40,18 @@ class BaseAudioDataset(Dataset):
         data: str,
         config: Dict,
     ):
-        assert path.exists(data), f'ERROR, cannot find {data}'
         super().__init__()
+
+        assert path.exists(data), f'ERROR, cannot find {data}'
         with open(data, 'r') as fd:
             self.data_dict = json.load(fd)
+
         self.index_map = {i: k for i, k in enumerate(self.data_dict)}
+
         self.sr = config['sample_rate']
         self.target_size = config['target_size']
+
+        self.simclr = True if config['model'] == 'simclr' else False
 
     def __len__(self):
         return len(self.data_dict)
@@ -72,7 +77,12 @@ class BaseAudioDataset(Dataset):
         datum = self.data_dict[data_id]
         audio_path = datum.get('wav', datum.get('audio'))
         audio = self._load_audio(audio_path)
-        return data_id, audio.unsqueeze(0)
+        if self.simclr:
+            # for SimCLR we need two augmentations of a same sample
+            audio = audio.expand(2, -1, -1)
+        else:
+            audio = audio.unsqueeze(0)
+        return data_id, audio
 
 
 class SpectrogramDataset(BaseAudioDataset):
@@ -142,13 +152,15 @@ if __name__ == '__main__':
     config = {
         'sample_rate': 16000,
         'input_dim': 80,
-        'n_fft': 512,
+        #'n_fft': 512,
+        'n_fft': None,
         'win_len': 512,
         'hop_len': 256,
         'simclr': True,
         'target_size': 16000*5,
         'n_mels': 80,
-        'model': 'simclr'
+        #'model': 'simclr'
+        'model': 'cpc'
     }
     spec_aug = SpecAugment(
             n_time_masks=2,
@@ -159,8 +171,10 @@ if __name__ == '__main__':
             p=1.0,
             zero_masking=True
         )
-    # dataset = BaseAudioDataset(config)
-    data = SpectrogramDataset('../atthack/atthack_test.json', config)
+    if config['n_fft']:
+        data = SpectrogramDataset('../atthack/atthack_test.json', config)
+    else:
+        data = BaseAudioDataset('../atthack/atthack_test.json', config)
     loader = DataLoader(
         data,
         3,

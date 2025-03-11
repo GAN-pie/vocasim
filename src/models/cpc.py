@@ -68,6 +68,11 @@ class ConvolutionModule(torch.nn.Module):
             nn.Dropout(dropout),
         )
 
+        def _weights_init(m):
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity="linear")
+        self.apply(_weights_init)
+
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         """
         Args:
@@ -93,15 +98,16 @@ def make_encoder(config):
 def make_autoregressive(config):
     return nn.GRU(
         config['ffn_dim'],
-        config['ffn_dim'],
+        config['hidden_dim'],
         batch_first=True,
+        bias=False
     )
 
 
 def make_projection(config):
     return nn.ModuleList([
         nn.Linear(
-            config['ffn_dim'],
+            config['hidden_dim'],
             config['ffn_dim'],
             bias=False
         )
@@ -116,7 +122,19 @@ class CPCInfoNCE(nn.Module):
         self.g_enc = make_encoder(config)
         self.g_ar = make_autoregressive(config)
         self.Wk = make_projection(config)
+
         # TODO: initialize weights
+        def _weights_init(m):
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='linear')
+            elif isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='linear')
+        self.apply(_weights_init)
+        # initialize autoregressive model
+        for p_list in self.g_ar._all_weights:
+            for p_name in p_list:
+                if 'weight_hh' in p_name:
+                    nn.init.orthogonal_(getattr(self.g_ar, p_name))
 
         # noise samples is equal to batch_size - 1
         # self.register_buffer('noise_samples', torch.tensor(config['noise_samples'], dtype=int))
@@ -174,7 +192,7 @@ class CPCInfoNCE(nn.Module):
                     torch.cat([f_k_pos, f_k_negs], dim=0), dim=0
                 )
 
-                loss = -1. * log_softmax[0]
+                loss = -1. * log_softmax[b]
 
                 batch_loss += [loss]
 

@@ -17,18 +17,20 @@ class ModelConfiguration:
 
     input_dim: int = 80
     n_heads: int = 4
-    ffn_dim: int = 128
+    ffn_dim: int = 512
+    hidden_dim: int = 256
     n_layers: int = 2
-    kernel_size: int = 31
+    kernel_size: int = 7
 
-    steps: int = 8
-    noise_samples: int = 12
+    steps: int = 1
+    noise_samples: int = 8
 
 
 @dataclass
 class AudioConfiguration:
     sample_rate: int = 16000
-    n_fft: int = 512
+
+    n_fft: Optional[int] = 512
     win_len: int = 512
     hop_len: int = 256
 
