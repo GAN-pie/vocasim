@@ -23,6 +23,7 @@ if __name__ == '__main__':
     arg_parser.add_argument('--model', default='simclr', choices=['simclr', 'cpc'])
     arg_parser.add_argument('--epochs', default=1, type=int)
     arg_parser.add_argument('--lr', default=1e-5, type=float)
+    arg_parser.add_argument('--batch-size', default=8, type=int)
 
     arg_parser.add_argument('--input-dim', default=80, type=int)
     arg_parser.add_argument('--n-fft', default=512, type=int)
