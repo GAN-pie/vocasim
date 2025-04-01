@@ -31,7 +31,7 @@ class NTXentLoss(nn.Module):
         z = torch.cat((z1_norm, z2_norm), dim=0)
         S = torch.exp(F.cosine_similarity(z[:, None, ...], z[None, ...], dim=2) / self.tau)
 
-        mask = torch.eye(S.shape[0]).roll(torch.numel(S) // 2).bool()
+        mask = torch.eye(S.shape[0]).to(S).roll(torch.numel(S) // 2).bool()
         positive_pairs = S[mask]
         negative_pairs = torch.sum(S[~mask].view(S.shape[0], -1), dim=-1)
 
@@ -41,7 +41,16 @@ class NTXentLoss(nn.Module):
         if self.reduce:
             loss = loss.mean()
 
-        return loss
+        most_similars = torch.cat(
+            [
+                positive_pairs[:, None],
+                S.masked_fill(mask, -9e32)
+            ],
+            dim=-1
+        ).argsort(dim=-1, descending=True).argmin(dim=-1)
+        accuracy = (most_similars == 0).float().mean()
+
+        return loss, accuracy
 
 
 class ProjectionModule(nn.Module):

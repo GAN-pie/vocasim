@@ -42,7 +42,7 @@ class SimCLRModule(pl.LightningModule):
         x1 = self.spec_augment(x1).permute(0, 2, 1)
         x2 = self.spec_augment(x2).permute(0, 2, 1)
         lengths = Tensor(lengths).to(x1)
-        loss = self.simclr(x1, x2, lengths)
+        loss, _ = self.simclr(x1, x2, lengths)
         self.log('train_loss', loss.detach(), on_step=True, on_epoch=True, prog_bar=True)
         return loss
     
@@ -51,8 +51,16 @@ class SimCLRModule(pl.LightningModule):
         x1 = x1.permute(0, 2, 1)
         x2 = x2.permute(0, 2, 1)
         lengths = Tensor(lengths).to(x1)
-        val_loss = self.simclr(x1, x2, lengths)
-        self.log('val_loss', val_loss.detach(), on_epoch=True, prog_bar=True)
+        val_loss, val_accuracy = self.simclr(x1, x2, lengths)
+        # self.log('val_loss', val_loss.detach(), on_epoch=True, prog_bar=True)
+        self.log_dict(
+            {
+                'val_loss': val_loss.detach(),
+                'val_accuracy': val_accuracy.detach()
+            },
+            on_epoch=True,
+            prog_bar=True
+        )
         return val_loss
 
     def on_before_optimizer_step(self, optimizer):
@@ -71,6 +79,7 @@ class SimCLRModule(pl.LightningModule):
             total_steps=self.trainer.estimated_stepping_batches,
             pct_start=0.05,
             anneal_strategy='cos',
+            div_factor=self.config['annealing_factor'],
             three_phase=False
         )
         # reduce_lr = ReduceLROnPlateau(
@@ -129,6 +138,7 @@ class CPCModule(pl.LightningModule):
             total_steps=self.trainer.estimated_stepping_batches,
             pct_start=0.05,
             anneal_strategy='cos',
+            div_factor=self.config['annealing_factor'],
             three_phase=False
         )
         # reduce_lr = ReduceLROnPlateau(
